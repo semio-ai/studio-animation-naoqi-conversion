@@ -1,0 +1,25 @@
+{
+  "format": "semio-effective-motion",
+  "version": 1,
+  "animationName": "Look around",
+  "timeBasis": "animation-local",
+  "timeUnit": "ms",
+  "channels": [
+    {
+      "output": "HeadYaw",
+      "units": "rad",
+      "keys": [
+        {
+          "timeMs": 0,
+          "value": 0,
+          "out": { "deltaTimeMs": 300, "deltaValue": 0 }
+        },
+        {
+          "timeMs": 900,
+          "value": 0.4,
+          "in": { "deltaTimeMs": -300, "deltaValue": 0 }
+        }
+      ]
+    }
+  ]
+}
