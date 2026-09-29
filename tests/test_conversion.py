@@ -9,7 +9,7 @@ from pathlib import Path
 
 PROJECT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(PROJECT))
-from convert_semio_effective_motion_to_naoqi_bezier import (
+from semio_naoqi_motion import (
     MotionFormatError, convert_motion, play_effective_motion, play_motion, prepare_motion,
 )
 

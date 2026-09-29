@@ -1,11 +1,13 @@
 # Studio effective motion to NAOqi Bézier
 
-`convert_semio_effective_motion_to_naoqi_bezier.py` lets an existing NAOqi Python
-program trigger animations exported from Studio. It converts **Export Effective
-Motion** JSON into the three nested arrays accepted by
-`ALMotion.angleInterpolationBezier(names, times, keys)`. The module uses only the
-Python standard library; pass it the `ALMotion` proxy or service your program
-already uses.
+`semio_naoqi_motion.py` is a single-file module that an existing NAOqi Python
+program can include to trigger animations exported from Studio. Copy it beside
+that program or add this repository to its Python path. It converts **Export
+Effective Motion** JSON into the three nested arrays accepted by
+`ALMotion.angleInterpolationBezier(names, times, keys)`. It uses only the Python
+standard library; pass it the `ALMotion` proxy or service your program already
+uses. `convert_semio_effective_motion_to_naoqi_bezier.py` remains a separate
+conversion command.
 
 ## Trigger animations from Python
 
@@ -13,7 +15,7 @@ For code using the classic NAOqi `ALProxy` API:
 
 ```python
 from naoqi import ALProxy
-from convert_semio_effective_motion_to_naoqi_bezier import (
+from semio_naoqi_motion import (
     play_effective_motion, play_motion, prepare_motion,
 )
 
