@@ -99,8 +99,11 @@ def convert_motion(source, lead_in_seconds=0.2):
         if name in names_seen:
             raise MotionFormatError("joint output {!r} appears more than once".format(name))
         names_seen.add(name)
-        if channel.get("units") != "rad":
-            raise MotionFormatError("{}.units must be 'rad' for NAOqi joint angles".format(path))
+        units = channel.get("units")
+        expected_units = "dimensionless" if name in ("LHand", "RHand") else "rad"
+        if units != expected_units:
+            raise MotionFormatError("{}.units must be {!r} for {!r}".format(
+                path, expected_units, name))
 
         points = _list(channel.get("keys"), "{}.keys".format(path))
         converted_points = []

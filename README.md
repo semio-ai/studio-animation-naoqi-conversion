@@ -43,9 +43,10 @@ dictionary, so a program can load animations from its own storage.
 
 Use the Python interpreter supported by your installed NAOqi SDK. This module
 is written to be importable from Python 2.7 or Python 3; it has only been run
-under Python 3 here because no NAOqi SDK or Python 2.7 runtime is installed on
-this machine. The caller remains responsible for connecting, preparing the
-robot's posture and stiffness, and deciding when motion is allowed. The
+under Python 3 here. The downloaded Choregraphe 2.8.8 bundle includes an
+x86_64 Python 2.7 runtime, but it cannot start on the arm64 development Mac.
+The caller remains responsible for connecting, preparing the robot's posture
+and stiffness, and deciding when motion is allowed. The
 functions do not call `wakeUp`, set stiffness, or change posture. NAOqi's
 `angleInterpolationBezier` call is blocking; schedule it outside any GPT event
 loop that must continue responding during playback.
@@ -90,33 +91,39 @@ offset or playback speed.
 
 The input must have `format: "semio-effective-motion"`, `version: 1`,
 `timeBasis: "animation-local"`, and `timeUnit: "ms"`. Each channel requires a
-unique, resolved joint `output`, `units: "rad"`, and at least one key. Every key
-needs finite `timeMs` and `value`. Each segment requires the first key's `out`
+unique, resolved joint `output` and at least one key. Rotating joints require
+`units: "rad"`; `LHand` and `RHand` require `units: "dimensionless"` for hand
+opening values. Every key needs finite `timeMs` and `value`. Each segment
+requires the first key's `out`
 and the next key's `in` handles. Their `deltaTimeMs` and `deltaValue` fields
 are relative to their own keys. The example file shows the complete structure.
 
 The converter rejects missing handles, repeated names, unordered timestamps,
-non-radian channels, non-finite values, and unsupported format versions. Studio
-already resolves named easing, inferred handles, and playback clamps before
+incorrect channel units, non-finite values, and unsupported format versions.
+Studio already resolves named easing, inferred handles, and playback clamps before
 writing this file; this script does not interpret Studio authoring directives.
 
 ## NAOqi compatibility and execution
 
+The intended robot is NAO V6, for which
+[Aldebaran lists NAOqi 2.8](https://doc.aldebaran.com/).
 The [Aldebaran 2.8 joint-control reference](https://docs.nextinsight.eu/doc.aldebaran.com/2-8/naoqi/motion/control-joint-api.html)
 describes each Bézier key as an angle plus a preceding and following handle,
 with each handle ordered `[InterpolationType, dTime, dAngle]`. This script emits
 mode `3`, the Bézier handle form used in Choregraphe motion exports. Older
 NAOqi references describe the last two handle fields in the opposite order;
-check the installed SDK or a motion exported by the target robot's Choregraphe
-version before execution. Curve behavior on a physical robot has not been
-verified here.
+check the installed SDK before execution. Choregraphe 2.8.8's bundled NAO
+`idle.qianim` contains 26 curves, including degree-based joint angles and
+dimensionless hand channels. All 26 curves (130 keys) passed a static
+handle-mapping comparison after converting frames to seconds and degrees to
+radians. Curve behavior on a physical robot has not been verified here.
 
 The Python trigger checks joint names but cannot establish that every sampled
 pose is achievable on a particular robot. Check joint limits, startup pose,
 timing, and the target SDK before executing a new animation on hardware. In
 particular, the handle mode and field order still need a runtime check against
-the NAOqi versions actually in use; the conversion tests alone cannot prove
-curve equivalence on NAOqi V4, V5, or V6.
+the target NAO V6's NAOqi installation; the conversion tests alone cannot prove
+curve equivalence on the robot.
 
 ## Tests
 
@@ -125,6 +132,6 @@ python3 -m unittest discover -s tests -v
 ```
 
 The tests cover mixed key-side handles, shared time translation, curve geometry,
-input validation, command-line output, and triggering through a fake `ALMotion`
-service. They do not require a NAOqi SDK or robot and do not verify physical
-playback.
+hand opening units, input validation, command-line output, and triggering through
+a fake `ALMotion` service. They do not require a NAOqi SDK or robot and do not
+verify physical playback.

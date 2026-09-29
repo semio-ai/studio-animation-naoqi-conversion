@@ -118,12 +118,32 @@ class ConversionTests(unittest.TestCase):
                 )
                 self.assertAlmostEqual(cubic(*naoqi_y, fraction), cubic(*source_y, fraction))
 
+    def test_hand_opening_channels_keep_dimensionless_values(self):
+        data = sample_input()
+        data["channels"] = [{
+            "output": "LHand",
+            "units": "dimensionless",
+            "keys": [
+                {"timeMs": 0, "value": 0.3,
+                 "out": {"deltaTimeMs": 200, "deltaValue": 0.1}},
+                {"timeMs": 600, "value": 0.7,
+                 "in": {"deltaTimeMs": -200, "deltaValue": -0.1}},
+            ],
+        }]
+        result = convert_motion(data)
+        self.assertEqual(result["names"], ["LHand"])
+        self.assertEqual(result["keys"][0][0][0], 0.3)
+        self.assertEqual(result["keys"][0][0][2], [3, 0.2, 0.1])
+        self.assertEqual(result["keys"][0][1][1], [3, -0.2, -0.1])
+
     def test_rejects_incompatible_input(self):
         changes = [
             (lambda data: data.update(version=2), "version"),
             (lambda data: data.update(version=True), "version"),
             (lambda data: data.update(timeBasis="scene"), "timeBasis"),
             (lambda data: data["channels"][0].update(units="m"), "units"),
+            (lambda data: data["channels"][0].update(units="dimensionless"), "units"),
+            (lambda data: data["channels"][0].update(output="RHand"), "units"),
             (lambda data: data["channels"][1].update(output="HeadYaw"), "appears more than once"),
             (lambda data: data["channels"][1].update(output=" HeadPitch "), "nonempty joint name"),
             (lambda data: data["channels"][0]["keys"][1].pop("in"), "in is required"),
