@@ -76,11 +76,13 @@ converter plays them through ALLeds:
 
 - **Flattening.** ALLeds moves between targets rather than along curves, so
   each LED curve becomes straight segments. A segment is halved while the
-  Bézier curve strays from it by more than half a brightness step (the eyes
-  have 64 levels, the chest and feet 256, the ears and head 16), as long as
-  both halves stay at least 24 ms long, two LoLA cycles. Where a curve changes
-  faster than that, the spacing wins. Every Studio key stays a breakpoint, and
-  values are clamped to 0..1.
+  Bézier curve could stray from it by more than half a brightness step (the
+  eyes have 64 levels, the chest and feet 256, the ears and head 16), as long
+  as both halves stay at least 24 ms long, two LoLA cycles. The curve lies
+  within the hull of its control points, so their distance from the segment
+  bounds the curve's. Where a curve changes faster than the spacing allows,
+  the spacing wins. Every Studio key stays a breakpoint, and values are
+  clamped to 0..1.
 - **RGB positions.** When an export animates all three channels of an eye
   position, the chest or a foot, they play as one `fadeListRGB`. It is sampled
   at the union of the three channels' breakpoints and packed as `0x00RRGGBB`.
@@ -179,7 +181,8 @@ percentage written on a 0 to 100 scale is refused rather than clamped to a
 limit on the robot. The [LED outputs](#led-channels) require `units: "%"`
 and key values within 0 to 1, Studio's stored intensity fraction. Their
 handles must stay within their segment, so that each LED curve is a function
-of time. No other output takes `"%"`. Every key needs finite `timeMs` and
+of time. No other output takes `"%"`, and no other output whose name
+contains `/` is converted, since NAOqi joint names have none. Every key needs finite `timeMs` and
 `value`. Each segment requires the first key's `out`
 and the next key's `in` handles. Their `deltaTimeMs` and `deltaValue` fields
 are relative to their own keys. The example files show the complete structure.
@@ -224,8 +227,10 @@ rests on these assumptions, none of which has been checked on a robot:
 2. ALLeds interpolates linearly between targets.
 3. A fade that reaches an LED as an earlier one ends replaces it. Chained fades
    are timed not to overlap, so this matters only when a fade returns late.
-4. ALLeds accepts about 50 concurrent calls and colour lists of a few hundred
-   entries.
+4. ALLeds accepts up to 70 concurrent calls and colour lists of a few hundred
+   entries. 70 is the most `play_motion` makes at once: one chain of fades for
+   each of two channels in all 19 RGB positions, and for all 32 ear and head
+   LEDs.
 5. `listGroup("AllLeds")` lists all 89 devices, and the short names and groups
    in the table name the documented devices. `play_motion` checks this on
    every play and refuses to start otherwise.
@@ -253,7 +258,7 @@ pass or fail.
 | `times` | Whether `fadeListRGB` times are absolute or per step, the ramp's shape, and which time lists are accepted (assumptions 1 and 2). |
 | `single` | Whether `fadeListRGB` drives a single-colour ear, head or face device, and from which byte. If it does, the ears and head could play as lists instead of fade chains. |
 | `overlap` | Whether a command that reaches an LED mid-fade cancels it, queues behind it or blends with it, and whether cancelling a qi future stops a fade (assumption 3). |
-| `limits` | Long colour lists, 32 concurrent fades, and the shortest effective fade (assumption 4). |
+| `limits` | Long colour lists, a fade on all 89 LEDs at once, and the shortest effective fade (assumption 4). |
 | `skew` | How far apart `play_motion`'s calls start, and when an LED changes relative to the plan. With `--allow-motion`, it also turns the head by 0.15 rad and back, and samples `HeadYaw`. |
 | `names` | Whether the robot lists the 89 devices and maps the 19 RGB positions as the converter expects (assumption 5). |
 
