@@ -297,9 +297,13 @@ def convert_motion(source, lead_in_seconds=0.2, leds=True):
         if name in names_seen:
             raise MotionFormatError("output {!r} appears more than once".format(name))
         names_seen.add(name)
-        units = channel.get("units")
         is_hand = name in HAND_JOINTS
         is_led = name in LED_DEVICES
+        # NAOqi joint names have no "/"; device names such as the LEDs' do.
+        if "/" in name and not is_led:
+            raise MotionFormatError(
+                "{}.output {!r} is neither a joint nor a NAO V6 LED".format(path, name))
+        units = channel.get("units")
         if is_hand and units not in HAND_UNITS:
             raise MotionFormatError("{}.units must be '%' or 'dimensionless' for {!r}".format(
                 path, name))
