@@ -22,8 +22,6 @@ CHEST = tuple("ChestBoard/Led/{}/Actuator/Value".format(color)
 EAR = "Ears/Led/Right/0Deg/Actuator/Value"
 HEAD = "Head/Led/Front/Right/0/Actuator/Value"
 FACE_RED = "Face/Led/Red/Right/0Deg/Actuator/Value"
-SINGLE_COLOUR = tuple(sorted(name for name in LED_DEVICES
-                             if name.startswith(("Ears/", "Head/"))))
 
 
 def timed(function, *arguments):
@@ -143,7 +141,8 @@ def check_limits(leds, motion, args):
     def fade(name):
         issued[name] = (time.time() - start,) + timed(leds.fade, name, 1.0, 0.5)
 
-    threads = [in_background(fade, name) for name in SINGLE_COLOUR]
+    # More than the 70 chains of fades play_motion can run at once.
+    threads = [in_background(fade, name) for name in sorted(LED_DEVICES)]
     for thread in threads:
         thread.join()
     errors = [result[2] for result in issued.values() if result[2] is not None]

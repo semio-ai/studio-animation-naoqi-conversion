@@ -265,6 +265,8 @@ class LedConversionTests(unittest.TestCase):
             values = stream["intensityList"]
             tolerance = LED_DEVICES[device]
         key_times = [1.0 + key["timeMs"] / 1000.0 for key in keys]
+        # Handles inside their segments keep time increasing, even crossed ones.
+        self.assertTrue(all(start < end for start, end in zip(times, times[1:])))
 
         def is_key(stamp):
             return any(abs(stamp - key_time) < 1e-9 for key_time in key_times)
@@ -288,8 +290,29 @@ class LedConversionTests(unittest.TestCase):
                     continue  # Too short to split: the spacing wins over tolerance.
                 share = (stamp - times[after - 1]) / (times[after] - times[after - 1])
                 actual = values[after - 1] + (values[after] - values[after - 1]) * share
-                # Probes between breakpoints can miss a clamped corner by a little.
-                self.assertLessEqual(abs(actual - expected), 1.5 * tolerance)
+                self.assertLessEqual(abs(actual - expected), tolerance + 1e-9)
+
+    def test_a_narrow_excursion_between_samples_is_followed(self):
+        # Control values (0, 10, -1000, 0) leave the curve above zero only for
+        # the first 1% of the segment, between any fixed sample points.
+        head = "Head/Led/Front/Left/0/Actuator/Value"
+
+        def blip(span):
+            return [
+                {"timeMs": 0, "value": 0.0,
+                 "out": {"deltaTimeMs": span / 3.0, "deltaValue": 10.0}},
+                {"timeMs": span, "value": 0.0,
+                 "in": {"deltaTimeMs": -span / 3.0, "deltaValue": -1000.0}},
+            ]
+
+        # Over 10 s the excursion lasts 100 ms and is followed within tolerance.
+        stream = convert_motion(export([led(head, blip(10000))]), lead_in_seconds=1.0)["leds"][0]
+        self.assert_follows(stream, head, blip(10000))
+        self.assertGreater(max(stream["intensityList"]), 0.06)
+        # Over 1 s it lasts 10 ms, inside one piece too short to split, so the
+        # spacing wins and the LED stays dark.
+        stream = convert_motion(export([led(head, blip(1000))]), lead_in_seconds=1.0)["leds"][0]
+        self.assertEqual(stream["intensityList"], [0.0, 0.0])
 
     def test_overshooting_curves_are_clamped_and_holds_collapse(self):
         keys = [

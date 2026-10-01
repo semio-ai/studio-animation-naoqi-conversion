@@ -143,7 +143,8 @@ def _flatten_led(times, keys, tolerance):
     """Return ``(time, value)`` breakpoints for one LED channel.
 
     Linear interpolation between the breakpoints stays within ``tolerance`` of
-    the Bézier curve, clamped to 0..1. Every Studio key remains a breakpoint.
+    the Bézier curve, clamped to 0..1, wherever the breakpoints are at least
+    twice LED_MIN_INTERVAL_SECONDS apart. Every Studio key remains a breakpoint.
     """
     breakpoints = [(times[0], keys[0][0])]
     for index in range(len(times) - 1):
@@ -151,27 +152,48 @@ def _flatten_led(times, keys, tolerance):
         xs = (times[index], times[index] + start[2][1],
               times[index + 1] + end[1][1], times[index + 1])
         ys = (start[0], start[0] + start[2][2], end[0] + end[1][2], end[0])
-        _subdivide(xs, ys, 0.0, 1.0, breakpoints[-1], (times[index + 1], end[0]),
-                   tolerance, breakpoints)
+        _subdivide(xs, ys, tolerance, breakpoints)
     return _without_holds(breakpoints)
 
 
-def _subdivide(xs, ys, low, high, first, last, tolerance, breakpoints):
-    # Halve the piece in time while the curve strays from the chord and both
-    # halves stay at least LED_MIN_INTERVAL_SECONDS long; where the curve
+def _subdivide(xs, ys, tolerance, breakpoints):
+    # Halve the piece in time while its error bound exceeds the tolerance and
+    # both halves stay at least LED_MIN_INTERVAL_SECONDS long; where the curve
     # changes faster than that, the spacing wins over the tolerance.
-    if (last[0] - first[0] >= 2 * LED_MIN_INTERVAL_SECONDS
-            and _strays(xs, ys, low, high, first, last, tolerance)):
-        middle = _parameter_at(xs, low, high, (first[0] + last[0]) / 2.0)
-        split = (_cubic(xs, middle), _unit(_cubic(ys, middle)))
-        _subdivide(xs, ys, low, middle, first, split, tolerance, breakpoints)
-        _subdivide(xs, ys, middle, high, split, last, tolerance, breakpoints)
+    if xs[3] - xs[0] >= 2 * LED_MIN_INTERVAL_SECONDS and _error_bound(xs, ys) > tolerance:
+        fraction = _parameter_at(xs, (xs[0] + xs[3]) / 2.0)
+        for half_xs, half_ys in zip(_split(xs, fraction), _split(ys, fraction)):
+            _subdivide(half_xs, half_ys, tolerance, breakpoints)
     else:
-        breakpoints.append(last)
+        breakpoints.append((xs[3], _unit(ys[3])))
 
 
-def _parameter_at(xs, low, high, stamp):
+def _error_bound(xs, ys):
+    """Bound how far the clamped curve strays from the chord between its clamped ends.
+
+    The curve lies within the hull of its control points, so its vertical
+    distance from a line is at most theirs. Clamping to 0..1 only moves a
+    value closer to a chord that lies within 0..1.
+    """
+    if max(ys) <= 0.0 or min(ys) >= 1.0:
+        return 0.0  # The whole piece clamps to 0, or to 1.
+    first, last = _unit(ys[0]), _unit(ys[3])
+    slope = (last - first) / (xs[3] - xs[0])
+    return max(abs(y - first - slope * (x - xs[0])) for x, y in zip(xs, ys))
+
+
+def _split(points, fraction):
+    # de Casteljau's construction: the control points of the two halves.
+    a, b, c, d = points
+    ab, bc, cd = a + (b - a) * fraction, b + (c - b) * fraction, c + (d - c) * fraction
+    abc, bcd = ab + (bc - ab) * fraction, bc + (cd - bc) * fraction
+    middle = abc + (bcd - abc) * fraction
+    return (a, ab, abc, middle), (middle, bcd, cd, d)
+
+
+def _parameter_at(xs, stamp):
     # Time never decreases along the curve, so bisection finds where it is stamp.
+    low, high = 0.0, 1.0
     for _ in range(40):
         middle = (low + high) / 2.0
         if _cubic(xs, middle) < stamp:
@@ -179,17 +201,6 @@ def _parameter_at(xs, low, high, stamp):
         else:
             high = middle
     return (low + high) / 2.0
-
-
-def _strays(xs, ys, low, high, first, last, tolerance):
-    # Five probes, because clamping to 0..1 puts corners between wider ones.
-    for fraction in (1 / 6.0, 2 / 6.0, 3 / 6.0, 4 / 6.0, 5 / 6.0):
-        position = low + (high - low) * fraction
-        stamp = _cubic(xs, position)
-        chord = first[1] + (last[1] - first[1]) * (stamp - first[0]) / (last[0] - first[0])
-        if abs(_unit(_cubic(ys, position)) - chord) > tolerance:
-            return True
-    return False
 
 
 def _without_holds(points):
@@ -297,9 +308,13 @@ def convert_motion(source, lead_in_seconds=0.2, leds=True):
         if name in names_seen:
             raise MotionFormatError("output {!r} appears more than once".format(name))
         names_seen.add(name)
-        units = channel.get("units")
         is_hand = name in HAND_JOINTS
         is_led = name in LED_DEVICES
+        # NAOqi joint names have no "/"; device names such as the LEDs' do.
+        if "/" in name and not is_led:
+            raise MotionFormatError(
+                "{}.output {!r} is neither a joint nor a NAO V6 LED".format(path, name))
+        units = channel.get("units")
         if is_hand and units not in HAND_UNITS:
             raise MotionFormatError("{}.units must be '%' or 'dimensionless' for {!r}".format(
                 path, name))
