@@ -380,12 +380,6 @@ def prepare_motion(source, lead_in_seconds=0.2, leds=True):
 _clock = getattr(time, "monotonic", time.time)
 
 
-def _sleep_until(deadline):
-    remaining = deadline - _clock()
-    if remaining > 0:
-        time.sleep(remaining)
-
-
 def _check_joints(motion_service, names):
     available = set(motion_service.getBodyNames("Body"))
     missing = sorted(set(names) - available)
@@ -417,73 +411,125 @@ def _check_leds(led_service, streams):
                 name, ", ".join(sorted(listed)), ", ".join(stream["devices"])))
 
 
-def _play_together(motion_service, led_service, prepared_motion, streams):
-    """Start the joint call and every LED stream together, then wait for all.
+def _check_services(motion_service, prepared_motion, led_service):
+    names = prepared_motion["names"]
+    streams = prepared_motion.get("leds") or []
+    if streams and led_service is None:
+        raise MotionFormatError(
+            "the motion has LED channels but no ALLeds service was given; "
+            "prepare it with leds=False to play the joints alone")
+    if names or not streams:
+        _check_joints(motion_service, names)
+    if streams:
+        _check_leds(led_service, streams)
+    return streams
 
-    NAOqi times count from the start of each call, so each worker subtracts
-    the time that passed between the shared start and its own call. A chain of
-    fades aims every fade at an absolute deadline, so a late return does not
-    delay the keys after it, whether or not ALLeds blocks during a fade.
+
+class Playback(object):
+    """A motion started by ``start_motion``: ``wait()`` for it or ``stop()`` it.
+
+    The joint call and every LED stream start together, each from its own
+    thread. NAOqi times count from the start of each call, so each thread
+    subtracts the time that passed between the shared start and its own call.
+    A chain of fades aims every fade at an absolute deadline, so a late return
+    does not delay the keys after it, whether or not ALLeds blocks during a fade.
     """
-    start = _clock()
 
-    def lateness(first_time):
-        late = _clock() - start
+    def __init__(self, motion_service, led_service, prepared_motion):
+        self._motion = motion_service
+        self._leds = led_service
+        self._names = prepared_motion["names"]
+        self._times = prepared_motion["times"]
+        self._keys = prepared_motion["keys"]
+        streams = prepared_motion.get("leds") or []
+        end_times = [channel[-1] for channel in self._times]
+        end_times.extend(stream["timeList"][-1] for stream in streams)
+        self._end = max(end_times)
+        self._stopped = threading.Event()
+        tasks = [(self._play_joints, ())] if self._names else []
+        for stream in streams:
+            if stream["method"] == "fadeListRGB":
+                tasks.append((self._play_colors, (stream,)))
+            else:
+                tasks.append((self._play_fades, (stream,)))
+        self._results = [None] * len(tasks)
+        self._errors = [None] * len(tasks)
+        self._start = _clock()
+        self._threads = [threading.Thread(target=self._run, args=(index,) + task)
+                         for index, task in enumerate(tasks)]
+        for thread in self._threads:
+            thread.daemon = True
+            thread.start()
+
+    def wait(self):
+        """Block until the last key has played; return ``angleInterpolationBezier``'s result.
+
+        If any call raised, re-raise the first error once the others finish.
+        A stopped playback returns ``None`` as soon as its calls have returned.
+        """
+        for index, thread in enumerate(self._threads):
+            while thread.is_alive():
+                thread.join(0.05)
+                # A stop can reach ALMotion before the joint task it should
+                # kill, so a stopped joint call that still runs is killed again.
+                if index == 0 and self._names and self._stopped.is_set() and thread.is_alive():
+                    self._motion.killTasksUsingResources(self._names)
+        if self._stopped.is_set():
+            return None
+        for error in self._errors:
+            if error is not None:
+                raise error
+        if self._stopped.wait(max(0.0, self._start + self._end - _clock())):
+            return None
+        return self._results[0] if self._names else None
+
+    def stop(self):
+        """End playback early.
+
+        The joints stop where they are, through ``killTasksUsingResources``.
+        Chains of fades issue no further fades. A ``fadeListRGB`` already sent
+        runs on unless ALLeds replaces it.
+        """
+        self._stopped.set()
+        if self._names:
+            self._motion.killTasksUsingResources(self._names)
+
+    def _run(self, index, task, arguments):
+        try:
+            self._results[index] = task(*arguments)
+        except Exception as error:
+            self._errors[index] = error
+
+    def _lateness(self, first_time):
+        late = _clock() - self._start
         if late >= first_time:
             raise MotionFormatError(
                 "starting the NAOqi calls took {:.3f} s, longer than the lead-in".format(late))
         return late
 
-    def joints():
-        joint_times = prepared_motion["times"]
-        late = lateness(min(channel[0] for channel in joint_times))
-        return motion_service.angleInterpolationBezier(
-            prepared_motion["names"],
-            [[stamp - late for stamp in channel] for channel in joint_times],
-            prepared_motion["keys"])
+    def _play_joints(self):
+        if self._stopped.is_set():
+            return None
+        late = self._lateness(min(channel[0] for channel in self._times))
+        return self._motion.angleInterpolationBezier(
+            self._names, [[stamp - late for stamp in channel] for channel in self._times],
+            self._keys)
 
-    def colors(stream):
-        late = lateness(stream["timeList"][0])
-        led_service.fadeListRGB(
+    def _play_colors(self, stream):
+        if self._stopped.is_set():
+            return
+        late = self._lateness(stream["timeList"][0])
+        self._leds.fadeListRGB(
             stream["name"], stream["rgbList"], [stamp - late for stamp in stream["timeList"]])
 
-    def fades(stream):
-        lateness(stream["timeList"][0])
+    def _play_fades(self, stream):
+        self._lateness(stream["timeList"][0])
         begin = 0.0
         for intensity, end in zip(stream["intensityList"], stream["timeList"]):
-            _sleep_until(start + begin)
-            led_service.fade(stream["name"], intensity, max(0.0, start + end - _clock()))
+            if self._stopped.wait(max(0.0, self._start + begin - _clock())):
+                return
+            self._leds.fade(stream["name"], intensity, max(0.0, self._start + end - _clock()))
             begin = end
-
-    tasks = []
-    if prepared_motion["names"]:
-        tasks.append((joints, ()))
-    for stream in streams:
-        tasks.append((colors if stream["method"] == "fadeListRGB" else fades, (stream,)))
-    results = [None] * len(tasks)
-    errors = [None] * len(tasks)
-
-    def run(index):
-        task, arguments = tasks[index]
-        try:
-            results[index] = task(*arguments)
-        except Exception as error:
-            errors[index] = error
-
-    threads = [threading.Thread(target=run, args=(index,)) for index in range(len(tasks))]
-    for thread in threads:
-        thread.daemon = True
-        thread.start()
-    for thread in threads:
-        thread.join()
-    for error in errors:
-        if error is not None:
-            raise error
-
-    end_times = [channel[-1] for channel in prepared_motion["times"]]
-    end_times.extend(stream["timeList"][-1] for stream in streams)
-    _sleep_until(start + max(end_times))
-    return results[0] if prepared_motion["names"] else None
 
 
 def play_motion(motion_service, prepared_motion, led_service=None):
@@ -494,20 +540,21 @@ def play_motion(motion_service, prepared_motion, led_service=None):
     ``angleInterpolationBezier``. A motion with LED channels needs
     ``led_service``; prepare it with ``leds=False`` to play its joints alone.
     """
-    names = prepared_motion["names"]
-    streams = prepared_motion.get("leds") or []
-    if streams and led_service is None:
-        raise MotionFormatError(
-            "the motion has LED channels but no ALLeds service was given; "
-            "prepare it with leds=False to play the joints alone")
-    if names or not streams:
-        _check_joints(motion_service, names)
-    if not streams:
-        return motion_service.angleInterpolationBezier(
-            names, prepared_motion["times"], prepared_motion["keys"]
-        )
-    _check_leds(led_service, streams)
-    return _play_together(motion_service, led_service, prepared_motion, streams)
+    if _check_services(motion_service, prepared_motion, led_service):
+        return Playback(motion_service, led_service, prepared_motion).wait()
+    return motion_service.angleInterpolationBezier(
+        prepared_motion["names"], prepared_motion["times"], prepared_motion["keys"]
+    )
+
+
+def start_motion(motion_service, prepared_motion, led_service=None):
+    """Start prepared arguments as ``play_motion`` does, and return a ``Playback``.
+
+    The same checks run before anything moves. Call ``wait()`` on the result
+    to block until the motion ends, or ``stop()`` to end it early.
+    """
+    _check_services(motion_service, prepared_motion, led_service)
+    return Playback(motion_service, led_service, prepared_motion)
 
 
 def play_effective_motion(motion_service, source, lead_in_seconds=0.2, led_service=None):

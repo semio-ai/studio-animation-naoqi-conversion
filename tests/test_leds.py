@@ -14,7 +14,7 @@ PROJECT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(PROJECT))
 from semio_naoqi_motion import (
     LED_DEVICES, LED_MIN_INTERVAL_SECONDS, RGB_LED_POSITIONS, MotionFormatError,
-    convert_motion, play_motion, prepare_motion,
+    convert_motion, play_motion, prepare_motion, start_motion,
 )
 from test_conversion import FakeMotionService, cubic, sample_input
 
@@ -135,6 +135,28 @@ class FakeLedService:
 
     def named(self, method, name):
         return [call for call in self.calls if call[1] == method and call[2] == name]
+
+
+class BlockingMotionService(FakeMotionService):
+    """Blocks in angleInterpolationBezier until its last key or a kill."""
+
+    def __init__(self, awake=True):
+        FakeMotionService.__init__(self)
+        self.awake = awake
+        self.killed = threading.Event()
+        self.kills = []
+
+    def angleInterpolationBezier(self, names, times, keys):
+        FakeMotionService.angleInterpolationBezier(self, names, times, keys)
+        self.killed.wait(max(channel[-1] for channel in times))
+        return "killed" if self.killed.is_set() else "finished"
+
+    def killTasksUsingResources(self, names):
+        self.kills.append(list(names))
+        self.killed.set()
+
+    def robotIsWakeUp(self):
+        return self.awake
 
 
 class LedConversionTests(unittest.TestCase):
@@ -438,6 +460,65 @@ class LedPlaybackTests(unittest.TestCase):
             play_motion(motion, self.mixed_motion(), leds)
         self.assertEqual(len(motion.calls), 1)
         self.assertEqual(len(leds.named("fade", EAR)), 4)
+
+
+
+class StartMotionTests(unittest.TestCase):
+    def long_motion(self):
+        return prepare_motion(export([
+            head_yaw([(0, 0.0), (600, 0.2)]),
+            led(EAR, linear([(0, 0.0), (100, 1.0), (200, 0.0), (300, 1.0), (400, 0.0),
+                             (500, 1.0), (600, 0.0)])),
+        ]), lead_in_seconds=0.05)
+
+    def test_start_returns_at_once_and_wait_returns_the_result(self):
+        motion = BlockingMotionService()
+        started = time.time()
+        playback = start_motion(motion, prepare_motion(sample_input(), lead_in_seconds=0.05))
+        self.assertLess(time.time() - started, 0.05)
+        self.assertEqual(playback.wait(), "finished")
+        self.assertGreaterEqual(time.time() - started, 1.65 - 0.01)
+        self.assertEqual(motion.kills, [])
+
+    def test_stop_ends_the_joints_and_the_fade_chains(self):
+        motion = BlockingMotionService()
+        leds = FakeLedService()
+        playback = start_motion(motion, self.long_motion(), leds)
+        time.sleep(0.2)
+        stopped = time.time() - leds.started
+        playback.stop()
+        returned = time.time()
+        self.assertIsNone(playback.wait())
+        self.assertLess(time.time() - returned, 0.1)
+        self.assertEqual(motion.kills, [["HeadYaw"]])
+        fades = leds.named("fade", EAR)
+        self.assertTrue(0 < len(fades) < 7, len(fades))
+        self.assertTrue(all(call[0] <= stopped + 0.01 for call in fades))
+
+    def test_a_stop_that_reaches_motion_first_is_repeated(self):
+        motion = BlockingMotionService()
+        missed = []
+        kill = motion.killTasksUsingResources
+        # The first kill arrives before ALMotion has the task, and does nothing.
+        motion.killTasksUsingResources = lambda names: missed.append(names) if not missed \
+            else kill(names)
+        playback = start_motion(motion, prepare_motion(sample_input(), lead_in_seconds=0.05))
+        time.sleep(0.05)
+        returned = time.time()
+        playback.stop()
+        self.assertIsNone(playback.wait())
+        self.assertLess(time.time() - returned, 0.3)
+        self.assertEqual(missed, [["HeadYaw", "HeadPitch"]])
+        self.assertEqual(motion.kills, [["HeadYaw", "HeadPitch"]])
+
+    def test_start_runs_the_same_checks_as_play(self):
+        motion = BlockingMotionService()
+        with self.assertRaisesRegex(MotionFormatError, "leds=False"):
+            start_motion(motion, self.long_motion())
+        with self.assertRaisesRegex(MotionFormatError, "HeadYaw"):
+            start_motion(FakeMotionService(joints=("HeadPitch",)), self.long_motion(),
+                         FakeLedService())
+        self.assertEqual(motion.calls, [])
 
 
 if __name__ == "__main__":

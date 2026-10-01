@@ -8,8 +8,10 @@ Effective Motion** JSON into the three nested arrays accepted by
 into `ALLeds` calls for the LED channels of a NAO V6. It uses only the Python
 standard library; pass it the `ALMotion` and `ALLeds` proxies or services your
 program already uses. `convert_semio_effective_motion_to_naoqi_bezier.py`
-remains a separate conversion command, and `probe_naoqi_leds.py` measures the
-ALLeds behavior that LED playback relies on
+remains a separate conversion command. `make_naoqi_animation_package.py` builds
+a NAOqi package so that animated speech can play the animations
+([Use animations in animated speech](#use-animations-in-animated-speech)), and
+`probe_naoqi_leds.py` measures the ALLeds behavior that LED playback relies on
 ([Checking LED playback on a robot](#checking-led-playback-on-a-robot)).
 
 ## Trigger animations from Python
@@ -49,6 +51,13 @@ channels does: without one, `play_motion` raises rather than play the joints
 alone. To play only the joints of such an animation, prepare it with
 `prepare_motion(path, leds=False)`. `prepare_motion` accepts a path or a parsed
 Studio export dictionary, so a program can load animations from its own storage.
+
+`start_motion` takes the same arguments and runs the same checks, but returns
+at once with a `Playback`. Its `wait()` blocks until the motion ends and
+returns what `play_motion` would; its `stop()` ends the motion early. Stopping
+kills the joints' ALMotion task with `killTasksUsingResources`, so the joints
+stop where they are, and chains of fades issue no further fades. A
+`fadeListRGB` already sent runs on unless ALLeds replaces it.
 
 Use the Python interpreter supported by your installed NAOqi SDK. This module
 is written to be importable from Python 2.7 or Python 3; it has only been run
@@ -101,6 +110,76 @@ converter plays them through ALLeds:
 - **Name check.** Each play first calls `listGroup("AllLeds")`, and then lists
   each RGB position it plays with `listLED` or `listGroup` to confirm that the
   position names the expected three devices.
+
+## Use animations in animated speech
+
+ALAnimatedSpeech's `^start`, `^run`, `^wait` and `^stop`, and
+`ALAnimationPlayer.run`, name installed behaviors rather than files.
+`make_naoqi_animation_package.py` builds a NAOqi package with one behavior per
+Studio export:
+
+```sh
+python3 make_naoqi_animation_package.py --package semio_animations \
+  examples/look_around.effective-motion.json \
+  Gestures/Glow=examples/look_and_glow.effective-motion.json \
+  --tag Gestures/Glow=glow
+```
+
+A behavior is named after its export file unless `NAME=` is given, and a name
+may contain `/` folders. Every export is converted while the package is built,
+so an export the converter would refuse stops the build. The command prints
+each behavior's full name:
+
+```text
+Wrote semio_animations.pkg with 2 behaviors:
+  ^start(semio_animations/look_around) ... ^wait(semio_animations/look_around)
+  ^start(semio_animations/Gestures/Glow) ... ^wait(semio_animations/Gestures/Glow)
+```
+
+Install the package from Choregraphe's Robot applications panel, or copy it
+to the robot and install it with `PackageManager`:
+
+```sh
+scp semio_animations.pkg nao@<robot-ip>:/home/nao/
+ssh nao@<robot-ip> qicli call PackageManager.install /home/nao/semio_animations.pkg
+```
+
+Then name the behaviors in annotated text:
+
+```python
+speech = session.service("ALAnimatedSpeech")
+speech.say("^start(semio_animations/Gestures/Glow) Look at my chest! "
+           "^wait(semio_animations/Gestures/Glow)",
+           {"bodyLanguageMode": "disabled"})
+```
+
+- **Instructions.** `^start` starts the animation at its place in the text,
+  and `^wait` holds the speech there until the animation ends. Without
+  `^wait`, ALAnimatedSpeech stops the animation when the text ends. `^run`
+  pauses the speech while the animation plays. Outside speech,
+  `ALAnimationPlayer.run("semio_animations/Gestures/Glow")` plays it.
+- **Tags.** `--tag NAME=TAG` adds a tag to a behavior in the package manifest.
+  Once the program calls
+  `ALAnimationPlayer.declarePathForTags("semio_animations/")`, `^startTag(glow)`
+  and `ALAnimationPlayer.runTag("glow")` choose among the behaviors with that
+  tag.
+- **Speaking movement.** ALAnimatedSpeech fills the rest of the text with
+  gestures from ALSpeakingMovement. Each behavior locks the joints it animates,
+  and the eye LEDs when it lights them, set to wait 1 second at startup and
+  lock during execution, as NAOqi's stock animations are. Speaking movement
+  releases what an animation asks for, but waiting for a gesture to release it
+  can delay the start by up to a second. When an animation uses the arms or
+  head, pass `{"bodyLanguageMode": "disabled"}` to `say` or put
+  `^mode(disabled)` in the text.
+
+Each behavior is one Python box. When the behavior loads, the box imports the
+package's copy of `semio_naoqi_motion.py`, under a module name of the
+package's own, and prepares the export bundled beside it. When the behavior
+starts, the box checks `ALMotion.robotIsWakeUp()`. If the robot is not awake,
+it logs that and finishes without moving; otherwise it plays the export with
+`start_motion` and finishes when the motion ends. When ALBehaviorManager stops
+the behavior, as ALAnimatedSpeech does when the text ends, the box stops the
+playback. The box runs on the robot's own Python 2.7.
 
 ## Convert a file
 
@@ -233,6 +312,24 @@ rests on these assumptions, none of which has been checked on a robot:
 The tests check the conversion and the call scheduling against fake services.
 They cannot show what the LEDs do.
 
+The generated package follows the layout of NAOqi's stock `animations`
+package. Its `manifest.xml` has one `behaviorContent` per behavior, and each
+`behavior.xar` has a root box that holds one Python box and declares the
+resources. The tests install a package into a fake ALBehaviorManager and run
+each box's script against a stand-in for Choregraphe's box class. They drive it
+through a fake ALAnimatedSpeech that follows the 2.8 documentation. No package
+has been installed on a robot yet, so these remain to be checked there:
+
+1. `PackageManager.install` and Choregraphe accept the generated package, and
+   `^start(<package>/<behavior>)` finds its behaviors.
+2. `behaviorAbsolutePath()` returns the behavior's folder, as the stock
+   behaviors that load files beside them assume.
+3. How long a `^start`-ed behavior takes to begin, with and without a
+   speaking-movement gesture holding its joints.
+4. Stopping a behavior unloads its box, so the animation stops with the text.
+5. The per-joint and eye-LED resource names, taken from the stock animations,
+   lock the joints and LEDs they name.
+
 ## Checking LED playback on a robot
 
 `probe_naoqi_leds.py` connects to a robot with the NAOqi Python SDK and runs
@@ -273,6 +370,9 @@ hand opening units and range, input validation, and command-line output. For
 LEDs, they cover the device table against the documented names, flattening
 against densely sampled Bézier curves, RGB merging, and playback through fake
 `ALMotion` and `ALLeds` services: call timing and deadlines, robot name checks,
-and error propagation. A smoke test runs every probe check against a simulated
-ALLeds. The tests do not require a NAOqi SDK or robot and do not verify
-physical playback.
+error propagation, and stopping a playback. A smoke test runs every probe check
+against a simulated ALLeds. For packages, they cover the package layout,
+manifest, resources and refusals, and run the generated boxes through fake
+`ALBehaviorManager` and `ALAnimatedSpeech` services: `^start` with `^wait`,
+`^run`, a stop at the end of the text, and a robot that is not awake. The tests
+do not require a NAOqi SDK or robot and do not verify physical playback.
