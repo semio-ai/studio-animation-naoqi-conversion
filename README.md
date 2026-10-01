@@ -92,14 +92,20 @@ offset or playback speed.
 The input must have `format: "semio-effective-motion"`, `version: 1`,
 `timeBasis: "animation-local"`, and `timeUnit: "ms"`. Each channel requires a
 unique, resolved joint `output` and at least one key. Rotating joints require
-`units: "rad"`; `LHand` and `RHand` require `units: "dimensionless"` for hand
-opening values. Every key needs finite `timeMs` and `value`. Each segment
+`units: "rad"`. `LHand` and `RHand` carry hand opening, which NAOqi takes as a
+fraction from 0 to 1; they accept `units: "%"`, which is how
+Studio marks a percentage and writes as that same stored fraction, or
+`units: "dimensionless"`. Their key values must lie within 0 to 1, so a
+percentage written on a 0 to 100 scale is refused rather than clamped to a
+limit on the robot. Every key needs finite `timeMs` and `value`. Each segment
 requires the first key's `out`
 and the next key's `in` handles. Their `deltaTimeMs` and `deltaValue` fields
 are relative to their own keys. The example file shows the complete structure.
 
 The converter rejects missing handles, repeated names, unordered timestamps,
 incorrect channel units, non-finite values, and unsupported format versions.
+It converts joint channels only: a non-joint output such as an LED channel is
+refused, and the whole file with it.
 Studio already resolves named easing, inferred handles, and playback clamps before
 writing this file; this script does not interpret Studio authoring directives.
 
@@ -132,6 +138,6 @@ python3 -m unittest discover -s tests -v
 ```
 
 The tests cover mixed key-side handles, shared time translation, curve geometry,
-hand opening units, input validation, command-line output, and triggering through
+hand opening units and range, input validation, command-line output, and triggering through
 a fake `ALMotion` service. They do not require a NAOqi SDK or robot and do not
 verify physical playback.
