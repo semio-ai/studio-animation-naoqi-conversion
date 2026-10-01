@@ -41,12 +41,12 @@ def load_semio_motion(path):
     # A module name of this package's own, so other copies do not collide.
     name = {module_name!r}
     try:
-        import importlib.util
+        from importlib.util import module_from_spec, spec_from_file_location
     except ImportError:
         import imp
         return imp.load_source(name, path)
-    spec = importlib.util.spec_from_file_location(name, path)
-    module = importlib.util.module_from_spec(spec)
+    spec = spec_from_file_location(name, path)
+    module = module_from_spec(spec)
     spec.loader.exec_module(module)
     return module
 

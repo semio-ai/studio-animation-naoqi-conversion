@@ -482,13 +482,8 @@ class Playback(object):
         If any call raised, re-raise the first error once the others finish.
         A stopped playback returns ``None`` as soon as its calls have returned.
         """
-        for index, thread in enumerate(self._threads):
-            while thread.is_alive():
-                thread.join(0.05)
-                # A stop can reach ALMotion before the joint task it should
-                # kill, so a stopped joint call that still runs is killed again.
-                if index == 0 and self._names and self._stopped.is_set() and thread.is_alive():
-                    self._motion.killTasksUsingResources(self._names)
+        for thread in self._threads:
+            thread.join()
         if self._stopped.is_set():
             return None
         for error in self._errors:
@@ -499,15 +494,23 @@ class Playback(object):
         return self._results[0] if self._names else None
 
     def stop(self):
-        """End playback early.
+        """End playback early, and return once the joint call has returned.
 
         The joints stop where they are, through ``killTasksUsingResources``.
         Chains of fades issue no further fades. A ``fadeListRGB`` already sent
         runs on unless ALLeds replaces it.
         """
         self._stopped.set()
-        if self._names:
-            self._motion.killTasksUsingResources(self._names)
+        if not self._names:
+            return
+        joints = self._threads[0]
+        self._motion.killTasksUsingResources(self._names)
+        while joints.is_alive():
+            joints.join(0.05)
+            # A kill can reach ALMotion before the joint task it should end,
+            # so it is repeated until the joint call returns.
+            if joints.is_alive():
+                self._motion.killTasksUsingResources(self._names)
 
     def _run(self, index, task, arguments):
         try:

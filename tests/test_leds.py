@@ -144,11 +144,13 @@ class BlockingMotionService(FakeMotionService):
         FakeMotionService.__init__(self)
         self.awake = awake
         self.killed = threading.Event()
+        self.returned = threading.Event()
         self.kills = []
 
     def angleInterpolationBezier(self, names, times, keys):
         FakeMotionService.angleInterpolationBezier(self, names, times, keys)
         self.killed.wait(max(channel[-1] for channel in times))
+        self.returned.set()
         return "killed" if self.killed.is_set() else "finished"
 
     def killTasksUsingResources(self, names):
@@ -527,12 +529,14 @@ class StartMotionTests(unittest.TestCase):
             else kill(names)
         playback = start_motion(motion, prepare_motion(sample_input(), lead_in_seconds=0.05))
         time.sleep(0.05)
-        returned = time.time()
+        stopped = time.time()
         playback.stop()
-        self.assertIsNone(playback.wait())
-        self.assertLess(time.time() - returned, 0.3)
+        # stop() alone ends the joint call, without wait().
+        self.assertTrue(motion.returned.is_set())
+        self.assertLess(time.time() - stopped, 0.3)
         self.assertEqual(missed, [["HeadYaw", "HeadPitch"]])
         self.assertEqual(motion.kills, [["HeadYaw", "HeadPitch"]])
+        self.assertIsNone(playback.wait())
 
     def test_start_runs_the_same_checks_as_play(self):
         motion = BlockingMotionService()

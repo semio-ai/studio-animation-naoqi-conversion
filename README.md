@@ -57,7 +57,9 @@ at once with a `Playback`. Its `wait()` blocks until the motion ends and
 returns what `play_motion` would; its `stop()` ends the motion early. Stopping
 kills the joints' ALMotion task with `killTasksUsingResources`, so the joints
 stop where they are, and chains of fades issue no further fades. A
-`fadeListRGB` already sent runs on unless ALLeds replaces it.
+`fadeListRGB` already sent runs on unless ALLeds replaces it. `stop()` returns
+once the joint call has returned, repeating the kill if it reached ALMotion
+before the task did.
 
 Use the Python interpreter supported by your installed NAOqi SDK. This module
 is written to be importable from Python 2.7 or Python 3; it has only been run
