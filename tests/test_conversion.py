@@ -178,6 +178,8 @@ class ConversionTests(unittest.TestCase):
             (lambda data: data["channels"][0].update(
                 output="ChestBoard/Led/Red/Actuator/Value", units="%"),
              "LEDs are not converted"),
+            (lambda data: data["channels"][0].update(output="ChestBoard/Led/Red/Actuator/Value"),
+             "LEDs are not converted"),
             (lambda data: data["channels"][1].update(output="HeadYaw"), "appears more than once"),
             (lambda data: data["channels"][1].update(output=" HeadPitch "), "nonempty joint name"),
             (lambda data: data["channels"][0]["keys"][1].pop("in"), "in is required"),
