@@ -1,5 +1,5 @@
 #!/usr/bin/env python
-"""Convert Studio effective-motion JSON to NAOqi Bézier arguments."""
+"""Convert Studio effective-motion JSON to NAOqi Bézier and ALLeds arguments."""
 
 import argparse
 import io
@@ -17,10 +17,14 @@ def main(argv=None):
         "--lead-in-seconds", type=float, default=0.2,
         help="time of the earliest key after a NAOqi call (default: 0.2)",
     )
+    parser.add_argument(
+        "--no-leds", dest="leds", action="store_false",
+        help="check the LED channels but leave them out of the output",
+    )
     args = parser.parse_args(argv)
 
     try:
-        converted = prepare_motion(args.input, args.lead_in_seconds)
+        converted = prepare_motion(args.input, args.lead_in_seconds, args.leds)
         rendered = json.dumps(converted, indent=2, allow_nan=False) + "\n"
         if args.output:
             with io.open(args.output, "w", encoding="utf-8") as stream:

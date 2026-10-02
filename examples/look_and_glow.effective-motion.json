@@ -1,0 +1,51 @@
+{
+  "format": "semio-effective-motion",
+  "version": 1,
+  "animationName": "Look and glow",
+  "timeBasis": "animation-local",
+  "timeUnit": "ms",
+  "channels": [
+    {
+      "output": "HeadYaw",
+      "units": "rad",
+      "keys": [
+        { "timeMs": 0, "value": 0, "out": { "deltaTimeMs": 300, "deltaValue": 0 } },
+        { "timeMs": 900, "value": 0.4, "in": { "deltaTimeMs": -300, "deltaValue": 0 } }
+      ]
+    },
+    {
+      "output": "ChestBoard/Led/Red/Actuator/Value",
+      "units": "%",
+      "keys": [
+        { "timeMs": 0, "value": 0, "out": { "deltaTimeMs": 300, "deltaValue": 0 } },
+        { "timeMs": 900, "value": 1, "in": { "deltaTimeMs": -300, "deltaValue": 0 } }
+      ]
+    },
+    {
+      "output": "ChestBoard/Led/Green/Actuator/Value",
+      "units": "%",
+      "keys": [
+        { "timeMs": 0, "value": 0.3, "out": { "deltaTimeMs": 300, "deltaValue": 0 } },
+        { "timeMs": 900, "value": 0.3, "in": { "deltaTimeMs": -300, "deltaValue": 0 } }
+      ]
+    },
+    {
+      "output": "ChestBoard/Led/Blue/Actuator/Value",
+      "units": "%",
+      "keys": [
+        { "timeMs": 0, "value": 1, "out": { "deltaTimeMs": 300, "deltaValue": 0 } },
+        { "timeMs": 900, "value": 0, "in": { "deltaTimeMs": -300, "deltaValue": 0 } }
+      ]
+    },
+    {
+      "output": "Ears/Led/Right/0Deg/Actuator/Value",
+      "units": "%",
+      "keys": [
+        { "timeMs": 0, "value": 0, "out": { "deltaTimeMs": 150, "deltaValue": 0.5 } },
+        { "timeMs": 450, "value": 1, "in": { "deltaTimeMs": -150, "deltaValue": 0 },
+          "out": { "deltaTimeMs": 150, "deltaValue": 0 } },
+        { "timeMs": 900, "value": 0, "in": { "deltaTimeMs": -150, "deltaValue": 0.5 } }
+      ]
+    }
+  ]
+}
