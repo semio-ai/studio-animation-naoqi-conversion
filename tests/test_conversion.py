@@ -49,6 +49,19 @@ def sample_input():
     }
 
 
+def hand_channel(output, units):
+    return {
+        "output": output,
+        "units": units,
+        "keys": [
+            {"timeMs": 0, "value": 0.3,
+             "out": {"deltaTimeMs": 200, "deltaValue": 0.1}},
+            {"timeMs": 600, "value": 0.7,
+             "in": {"deltaTimeMs": -200, "deltaValue": -0.1}},
+        ],
+    }
+
+
 def cubic(a, b, c, d, t):
     remaining = 1 - t
     return (remaining ** 3 * a + 3 * remaining ** 2 * t * b
@@ -118,23 +131,39 @@ class ConversionTests(unittest.TestCase):
                 )
                 self.assertAlmostEqual(cubic(*naoqi_y, fraction), cubic(*source_y, fraction))
 
-    def test_hand_opening_channels_keep_dimensionless_values(self):
+    def test_hand_opening_channels_keep_fraction_values(self):
+        # Studio writes a hand marked as a percentage with the same stored
+        # fraction NAOqi takes, so both spellings convert to identical keys.
+        for units in ("%", "dimensionless"):
+            with self.subTest(units=units):
+                data = sample_input()
+                data["channels"] = [hand_channel("LHand", units)]
+                result = convert_motion(data)
+                self.assertEqual(result["names"], ["LHand"])
+                self.assertEqual(result["keys"][0][0][0], 0.3)
+                self.assertEqual(result["keys"][0][0][2], [3, 0.2, 0.1])
+                self.assertEqual(result["keys"][0][1][1], [3, -0.2, -0.1])
+
+    def test_hand_opening_accepts_both_limits(self):
         data = sample_input()
-        data["channels"] = [{
-            "output": "LHand",
-            "units": "dimensionless",
-            "keys": [
-                {"timeMs": 0, "value": 0.3,
-                 "out": {"deltaTimeMs": 200, "deltaValue": 0.1}},
-                {"timeMs": 600, "value": 0.7,
-                 "in": {"deltaTimeMs": -200, "deltaValue": -0.1}},
-            ],
-        }]
+        hand = hand_channel("RHand", "%")
+        hand["keys"][0]["value"] = 0.0
+        hand["keys"][1]["value"] = 1.0
+        data["channels"] = [hand]
         result = convert_motion(data)
-        self.assertEqual(result["names"], ["LHand"])
-        self.assertEqual(result["keys"][0][0][0], 0.3)
-        self.assertEqual(result["keys"][0][0][2], [3, 0.2, 0.1])
-        self.assertEqual(result["keys"][0][1][1], [3, -0.2, -0.1])
+        self.assertEqual([key[0] for key in result["keys"][0]], [0.0, 1.0])
+
+    def test_rejects_hand_values_off_the_fraction_scale(self):
+        # A percentage written as 0..100 would otherwise reach NAOqi, which
+        # clamps it to fully open instead of refusing it.
+        for value in (35, 1.01, -0.01):
+            with self.subTest(value=value):
+                data = sample_input()
+                hand = hand_channel("LHand", "%")
+                hand["keys"][1]["value"] = value
+                data["channels"] = [hand]
+                with self.assertRaisesRegex(MotionFormatError, "fraction from 0 to 1"):
+                    convert_motion(data)
 
     def test_rejects_incompatible_input(self):
         changes = [
@@ -144,6 +173,13 @@ class ConversionTests(unittest.TestCase):
             (lambda data: data["channels"][0].update(units="m"), "units"),
             (lambda data: data["channels"][0].update(units="dimensionless"), "units"),
             (lambda data: data["channels"][0].update(output="RHand"), "units"),
+            (lambda data: data["channels"][0].update(units="%"),
+             "only LHand and RHand take percentages"),
+            (lambda data: data["channels"][0].update(
+                output="ChestBoard/Led/Red/Actuator/Value", units="%"),
+             "LEDs are not converted"),
+            (lambda data: data["channels"][0].update(output="ChestBoard/Led/Red/Actuator/Value"),
+             "LEDs are not converted"),
             (lambda data: data["channels"][1].update(output="HeadYaw"), "appears more than once"),
             (lambda data: data["channels"][1].update(output=" HeadPitch "), "nonempty joint name"),
             (lambda data: data["channels"][0]["keys"][1].pop("in"), "in is required"),
